@@ -1,18 +1,25 @@
 truncate analysis.tmp_rfm_recency;
 insert into analysis.tmp_rfm_recency 
-WITH status AS(
-    SELECT id
-    FROM analysis.orderstatuses
-    WHERE key = 'Closed'
-)
-SELECT 
-    u.id AS user_id,
-    NTILE(5) OVER (ORDER BY max(o.order_ts) NULLS FIRST) AS recency
-FROM 
-    analysis.users AS u
-LEFT JOIN
-    analysis.orders AS o 
-        ON u.id = o.user_id
-        AND o.status = (SELECT * FROM status)
-        AND EXTRACT (YEAR FROM o.order_ts) >= 2022
-GROUP BY u.id;
+with o as (
+	select o.user_id, o.order_ts
+	from analysis.orders o, analysis.orderstatuses os 
+	where os."key" = 'Closed' and o.status = os.id 
+		and o.order_ts >= '01.01.2022'::timestamp	
+),
+uo as (
+	select u.id, 
+		max(coalesce(o.order_ts,'01.01.2022'::timestamp))
+		 as "date_last_order"
+	from analysis.users u
+	left join o on o.user_id = u.id 
+	group by u.id
+	),
+recency as
+	(select 
+		date_last_order,
+		ntile(5) OVER( ORDER BY t.date_last_order nulls first) as "recency"
+	from (select date_last_order from uo group by date_last_order) t )
+SELECT uo.id as "user_id",   
+       recency.recency
+from uo
+join recency on recency.date_last_order = uo.date_last_order;
